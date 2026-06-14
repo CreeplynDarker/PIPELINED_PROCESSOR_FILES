@@ -1,165 +1,89 @@
-module datapath(input  clk, reset,
-                input  [1:0]  ResultSrc, 
-                input  PCSrc, ALUSrc,
-                input  RegWrite,
-                // CHANGE:
-                // ImmSrc was 2 bits before.
-                // Now it is 3 bits because we need a new encoding for U-type immediates.
-                // New ImmSrc encoding:
-                // 000 = I-type
-                // 001 = S-type
-                // 010 = B-type
-                // 011 = J-type
-                // 100 = U-type, used by lui
-                input  [2:0]  ImmSrc, 
-                input  [3:0]  ALUControl,
-                input  JalrSrc, // CHANGE C
-                output Zero, LT, // CHANGE B:
-                output [31:0] PC,
-                input  [31:0] Instr,
-                output [31:0] ALUResult, WriteData, 
-                input  [31:0] ReadData);
-  
-  localparam WIDTH = 32; // Define a local parameter for bus width
+module datapath(input         clk, reset,
+                // control desde controller
+                input         PCSrcE,
+                input         ALUSrcE, JalrSrcE,
+                input  [3:0]  ALUControlE,
+                input  [2:0]  ImmSrcD,
+                input         RegWriteW,
+                input  [1:0]  ResultSrcW,
+                // interfaz de memoria (con top)
+                input  [31:0] InstrF,        // desde imem
+                input  [31:0] ReadDataM,     // desde dmem
+                output [31:0] PCF,           // hacia imem
+                output [31:0] ALUResultM,    // hacia dmem (direccion)
+                output [31:0] WriteDataM,    // hacia dmem (dato)
+                // hacia controller
+                output [6:0]  opD,
+                output [2:0]  funct3D,
+                output        funct7b5D,
+                output        ZeroE, LTE);
 
-  wire [31:0] PCNext, PCPlus4, PCTarget;
-  wire [31:0] PCTargetBase;   // CHANGE C 
-  wire [31:0] ImmExt; 
-  wire [31:0] SrcA, SrcB; 
-  wire [31:0] Result; 
+  // ---- Fetch ----
+  reg  [31:0] PCF_r;
+  wire [31:0] PCNextF, PCPlus4F, PCTargetE;
+  assign PCF = PCF_r;
+  mux2 #(32) pcmux(.d0(PCPlus4F), .d1(PCTargetE), .s(PCSrcE), .y(PCNextF));
+  always @(posedge clk, posedge reset)
+    if (reset) PCF_r <= 32'b0; else PCF_r <= PCNextF;
+  adder pcadd4(.a(PCF), .b(32'd4), .y(PCPlus4F));
 
-  // ============================================================
-  // Next PC logic
-  // No change needed for lui.
-  // lui is not a branch or jump, so normally PCNext = PCPlus4.
-  // ============================================================
+  // ---- IF/ID ----
+  reg [31:0] InstrD, PCD, PCPlus4D;
+  always @(posedge clk, posedge reset)
+    if (reset) {InstrD,PCD,PCPlus4D} <= 0;
+    else begin InstrD<=InstrF; PCD<=PCF; PCPlus4D<=PCPlus4F; end
 
-  flopr #(WIDTH) pcreg(
-    .clk(clk), 
-    .reset(reset), 
-    .d(PCNext), 
-    .q(PC)
-  ); 
+  assign opD=InstrD[6:0]; assign funct3D=InstrD[14:12]; assign funct7b5D=InstrD[30];
 
-  adder pcadd4(
-    .a(PC), 
-    .b({WIDTH{1'b0}} + 4), // Using WIDTH parameter for constant 4
-    .y(PCPlus4)
-  ); 
+  // ---- Decode ----
+  wire [31:0] RD1D, RD2D, ImmExtD, ResultW;
+  regfile rf(.clk(clk), .we3(RegWriteW), .a1(InstrD[19:15]), .a2(InstrD[24:20]),
+             .a3(RdW), .wd3(ResultW), .rd1(RD1D), .rd2(RD2D));
+  extend ext(.instr(InstrD[31:7]), .immsrc(ImmSrcD), .immext(ImmExtD));
 
-  // CHANGE C: el destino del salto parte de PC (jal/branch) o de rs1 (jalr)
-  mux2 #(WIDTH) jalrmux(
-    .d0(PC), 
-    .d1(SrcA), 
-    .s(JalrSrc), 
-    .y(PCTargetBase)
-  ); 
+  // ---- ID/EX ----
+  reg [31:0] RD1E, RD2E, PCE, ImmExtE, PCPlus4E;
+  reg [4:0]  Rs1E, Rs2E, RdE;
+  always @(posedge clk, posedge reset)
+    if (reset) {RD1E,RD2E,PCE,ImmExtE,PCPlus4E,Rs1E,Rs2E,RdE} <= 0;
+    else begin
+      RD1E<=RD1D; RD2E<=RD2D; PCE<=PCD; ImmExtE<=ImmExtD; PCPlus4E<=PCPlus4D;
+      Rs1E<=InstrD[19:15]; Rs2E<=InstrD[24:20]; RdE<=InstrD[11:7];
+    end
 
-  adder pcaddbranch(
-    .a(PCTargetBase),   // antes era .a(PC)
-    .b(ImmExt), 
-    .y(PCTarget)
-  ); 
+  // ---- Execute ----
+  wire [31:0] SrcAE, SrcBE, ALUResultE, WriteDataE, PCTargetBaseE;
+  assign SrcAE = RD1E;                 // (forwarding en 2B)
+  assign WriteDataE = RD2E;            // (forwarding en 2B)
+  mux2 #(32) srcbmux(.d0(RD2E), .d1(ImmExtE), .s(ALUSrcE), .y(SrcBE));
+  alu alu(.a(SrcAE), .b(SrcBE), .alucontrol(ALUControlE),
+          .result(ALUResultE), .zero(ZeroE), .lt(LTE));
+  mux2 #(32) jalrmux(.d0(PCE), .d1(SrcAE), .s(JalrSrcE), .y(PCTargetBaseE));
+  adder pcaddbranch(.a(PCTargetBaseE), .b(ImmExtE), .y(PCTargetE));
 
-  mux2 #(WIDTH) pcmux(
-    .d0(PCPlus4), 
-    .d1(PCTarget), 
-    .s(PCSrc), 
-    .y(PCNext)
-  ); 
- 
-  // ============================================================
-  // Register file logic
-  // No structural change needed for lui.
-  //
-  // For lui:
-  //   rd = Instr[11:7]
-  //   wd3 = Result
-  //   RegWrite = 1
-  //
-  // The value written to rd will come from ImmExt through the
-  // modified Result mux below.
-  // ============================================================
+  // ---- EX/MEM ----
+  reg [31:0] ALUResultM_r, WriteDataM_r, PCPlus4M, ImmExtM;
+  reg [4:0]  RdM;
+  always @(posedge clk, posedge reset)
+    if (reset) {ALUResultM_r,WriteDataM_r,RdM,PCPlus4M,ImmExtM} <= 0;
+    else begin
+      ALUResultM_r<=ALUResultE; WriteDataM_r<=WriteDataE; RdM<=RdE;
+      PCPlus4M<=PCPlus4E; ImmExtM<=ImmExtE;
+    end
+  assign ALUResultM = ALUResultM_r;
+  assign WriteDataM = WriteDataM_r;
 
-  regfile rf(
-    .clk(clk), 
-    .we3(RegWrite), 
-    .a1(Instr[19:15]), 
-    .a2(Instr[24:20]), 
-    .a3(Instr[11:7]), 
-    .wd3(Result), 
-    .rd1(SrcA), 
-    .rd2(WriteData)
-  ); 
+  // ---- MEM/WB ----
+  reg [31:0] ALUResultW, ReadDataW, PCPlus4W, ImmExtW;
+  reg [4:0]  RdW;
+  always @(posedge clk, posedge reset)
+    if (reset) {ALUResultW,ReadDataW,RdW,PCPlus4W,ImmExtW} <= 0;
+    else begin
+      ALUResultW<=ALUResultM; ReadDataW<=ReadDataM; RdW<=RdM;
+      PCPlus4W<=PCPlus4M; ImmExtW<=ImmExtM;
+    end
 
-  // ============================================================
-  // Immediate extension logic
-  //
-  // CHANGE:
-  // extend.v now receives a 3-bit ImmSrc.
-  // This allows it to generate U-type immediates for lui:
-  //
-  //   ImmExt = {Instr[31:12], 12'b0}
-  //
-  // ============================================================
-
-  extend ext(
-    .instr(Instr[31:7]), 
-    .immsrc(ImmSrc), 
-    .immext(ImmExt)
-  ); 
-
-  // ============================================================
-  // ALU logic
-  // No new ALU operation is needed for lui in this implementation.
-  //
-  // lui bypasses the ALU and writes ImmExt directly to rd.
-  //
-  // xor still uses the normal R-type ALU path:
-  //   SrcA = rs1
-  //   SrcB = rs2
-  //   ALUControl = 100
-  //   ALUResult = SrcA ^ SrcB
-  // ============================================================
-
-  mux2 #(WIDTH) srcbmux(
-    .d0(WriteData), 
-    .d1(ImmExt), 
-    .s(ALUSrc), 
-    .y(SrcB)
-  ); 
-
-  alu alu(
-    .a(SrcA), 
-    .b(SrcB), 
-    .alucontrol(ALUControl), 
-    .result(ALUResult), 
-    .zero(Zero),
-    .lt(LT) // CHANGE B
-  ); 
-
-  // ============================================================
-  // Writeback result mux
-  //
-  // CHANGE:
-  // The original mux3 had only:
-  //   ResultSrc = 00 -> ALUResult
-  //   ResultSrc = 01 -> ReadData
-  //   ResultSrc = 10 -> PCPlus4
-  //
-  // For lui, we need one more input:
-  //   ResultSrc = 11 -> ImmExt
-  //
-  // Therefore, replace mux3 with mux4.
-  // ============================================================
-
-  mux4 #(WIDTH) resultmux(
-    .d0(ALUResult), // ResultSrc = 00, R-type/I-type ALU result
-    .d1(ReadData),  // ResultSrc = 01, lw
-    .d2(PCPlus4),   // ResultSrc = 10, jal
-    .d3(ImmExt),    // CHANGE: ResultSrc = 11, lui
-    .s(ResultSrc), 
-    .y(Result)
-  ); 
-
+  // ---- Writeback ----
+  mux4 #(32) resultmux(.d0(ALUResultW), .d1(ReadDataW), .d2(PCPlus4W), .d3(ImmExtW),
+                       .s(ResultSrcW), .y(ResultW));
 endmodule
