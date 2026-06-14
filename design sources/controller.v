@@ -11,6 +11,7 @@ module controller(input        clk, reset,
                   output       ALUSrcE, JalrSrcE,
                   output [3:0] ALUControlE,
                   output       MemWriteM,
+                  output       RegWriteM,
                   output       RegWriteW,
                   output [1:0] ResultSrcW);
 
@@ -58,6 +59,7 @@ module controller(input        clk, reset,
     if (reset) {RegWriteM_r,ResultSrcM,MemWriteM_r} <= 0;
     else begin RegWriteM_r<=RegWriteE; ResultSrcM<=ResultSrcE; MemWriteM_r<=MemWriteE; end
   assign MemWriteM = MemWriteM_r;
+  assign RegWriteM = RegWriteM_r;
 
   // ---- MEM/WB: registro de control ----
   reg RegWriteW_r;

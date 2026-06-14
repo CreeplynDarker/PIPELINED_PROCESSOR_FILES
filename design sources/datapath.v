@@ -12,6 +12,9 @@ module datapath(input         clk, reset,
                 output [31:0] PCF,           // hacia imem
                 output [31:0] ALUResultM,    // hacia dmem (direccion)
                 output [31:0] WriteDataM,    // hacia dmem (dato)
+                // hazard unit (2B)
+                input  [1:0]  ForwardAE, ForwardBE,
+                output reg [4:0] Rs1E, Rs2E, RdM, RdW,
                 // hacia controller
                 output [6:0]  opD,
                 output [2:0]  funct3D,
@@ -43,7 +46,7 @@ module datapath(input         clk, reset,
 
   // ---- ID/EX ----
   reg [31:0] RD1E, RD2E, PCE, ImmExtE, PCPlus4E;
-  reg [4:0]  Rs1E, Rs2E, RdE;
+  reg [4:0]  RdE;
   always @(posedge clk, posedge reset)
     if (reset) {RD1E,RD2E,PCE,ImmExtE,PCPlus4E,Rs1E,Rs2E,RdE} <= 0;
     else begin
@@ -53,9 +56,10 @@ module datapath(input         clk, reset,
 
   // ---- Execute ----
   wire [31:0] SrcAE, SrcBE, ALUResultE, WriteDataE, PCTargetBaseE;
-  assign SrcAE = RD1E;                 // (forwarding en 2B)
-  assign WriteDataE = RD2E;            // (forwarding en 2B)
-  mux2 #(32) srcbmux(.d0(RD2E), .d1(ImmExtE), .s(ALUSrcE), .y(SrcBE));
+  // forwarding: 00=regfile, 01=WB(ResultW), 10=MEM(ALUResultM)
+  mux3 #(32) faemux(.d0(RD1E), .d1(ResultW), .d2(ALUResultM), .s(ForwardAE), .y(SrcAE));
+  mux3 #(32) fbemux(.d0(RD2E), .d1(ResultW), .d2(ALUResultM), .s(ForwardBE), .y(WriteDataE));
+  mux2 #(32) srcbmux(.d0(WriteDataE), .d1(ImmExtE), .s(ALUSrcE), .y(SrcBE));
   alu alu(.a(SrcAE), .b(SrcBE), .alucontrol(ALUControlE),
           .result(ALUResultE), .zero(ZeroE), .lt(LTE));
   mux2 #(32) jalrmux(.d0(PCE), .d1(SrcAE), .s(JalrSrcE), .y(PCTargetBaseE));
@@ -63,7 +67,6 @@ module datapath(input         clk, reset,
 
   // ---- EX/MEM ----
   reg [31:0] ALUResultM_r, WriteDataM_r, PCPlus4M, ImmExtM;
-  reg [4:0]  RdM;
   always @(posedge clk, posedge reset)
     if (reset) {ALUResultM_r,WriteDataM_r,RdM,PCPlus4M,ImmExtM} <= 0;
     else begin
@@ -75,7 +78,6 @@ module datapath(input         clk, reset,
 
   // ---- MEM/WB ----
   reg [31:0] ALUResultW, ReadDataW, PCPlus4W, ImmExtW;
-  reg [4:0]  RdW;
   always @(posedge clk, posedge reset)
     if (reset) {ALUResultW,ReadDataW,RdW,PCPlus4W,ImmExtW} <= 0;
     else begin
