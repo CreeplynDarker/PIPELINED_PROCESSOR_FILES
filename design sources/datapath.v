@@ -14,7 +14,9 @@ module datapath(input         clk, reset,
                 output [31:0] WriteDataM,    // hacia dmem (dato)
                 // hazard unit (2B)
                 input  [1:0]  ForwardAE, ForwardBE,
-                output reg [4:0] Rs1E, Rs2E, RdM, RdW,
+                input         StallF, StallD, FlushE,
+                output reg [4:0] Rs1E, Rs2E, RdM, RdW, RdE,
+                output [4:0]  Rs1D, Rs2D,
                 // hacia controller
                 output [6:0]  opD,
                 output [2:0]  funct3D,
@@ -27,16 +29,18 @@ module datapath(input         clk, reset,
   assign PCF = PCF_r;
   mux2 #(32) pcmux(.d0(PCPlus4F), .d1(PCTargetE), .s(PCSrcE), .y(PCNextF));
   always @(posedge clk, posedge reset)
-    if (reset) PCF_r <= 32'b0; else PCF_r <= PCNextF;
+    if (reset) PCF_r <= 32'b0;
+    else if (~StallF) PCF_r <= PCNextF;
   adder pcadd4(.a(PCF), .b(32'd4), .y(PCPlus4F));
 
   // ---- IF/ID ----
   reg [31:0] InstrD, PCD, PCPlus4D;
   always @(posedge clk, posedge reset)
     if (reset) {InstrD,PCD,PCPlus4D} <= 0;
-    else begin InstrD<=InstrF; PCD<=PCF; PCPlus4D<=PCPlus4F; end
+    else if (~StallD) begin InstrD<=InstrF; PCD<=PCF; PCPlus4D<=PCPlus4F; end
 
   assign opD=InstrD[6:0]; assign funct3D=InstrD[14:12]; assign funct7b5D=InstrD[30];
+  assign Rs1D=InstrD[19:15]; assign Rs2D=InstrD[24:20];
 
   // ---- Decode ----
   wire [31:0] RD1D, RD2D, ImmExtD, ResultW;
@@ -46,9 +50,8 @@ module datapath(input         clk, reset,
 
   // ---- ID/EX ----
   reg [31:0] RD1E, RD2E, PCE, ImmExtE, PCPlus4E;
-  reg [4:0]  RdE;
   always @(posedge clk, posedge reset)
-    if (reset) {RD1E,RD2E,PCE,ImmExtE,PCPlus4E,Rs1E,Rs2E,RdE} <= 0;
+    if (reset | FlushE) {RD1E,RD2E,PCE,ImmExtE,PCPlus4E,Rs1E,Rs2E,RdE} <= 0;
     else begin
       RD1E<=RD1D; RD2E<=RD2D; PCE<=PCD; ImmExtE<=ImmExtD; PCPlus4E<=PCPlus4D;
       Rs1E<=InstrD[19:15]; Rs2E<=InstrD[24:20]; RdE<=InstrD[11:7];

@@ -13,7 +13,9 @@ module controller(input        clk, reset,
                   output       MemWriteM,
                   output       RegWriteM,
                   output       RegWriteW,
-                  output [1:0] ResultSrcW);
+                  output [1:0] ResultSrcW,
+                  input        FlushE,
+                  output       ResultSrcE0);
 
   // ---- Decode: decodificadores (combinacional) ----
   wire       RegWriteD, MemWriteD, JumpD, BranchD, ALUSrcD, JalrSrcD;
@@ -32,7 +34,7 @@ module controller(input        clk, reset,
   reg [3:0]  ALUControlE_r;
   reg [2:0]  funct3E;
   always @(posedge clk, posedge reset)
-    if (reset) {RegWriteE,MemWriteE,JumpE,BranchE,ResultSrcE,
+    if (reset | FlushE) {RegWriteE,MemWriteE,JumpE,BranchE,ResultSrcE,
                 ALUControlE_r,ALUSrcE_r,JalrSrcE_r,funct3E} <= 0;
     else begin
       RegWriteE<=RegWriteD; MemWriteE<=MemWriteD; JumpE<=JumpD; BranchE<=BranchD;
@@ -40,6 +42,7 @@ module controller(input        clk, reset,
       ALUSrcE_r<=ALUSrcD; JalrSrcE_r<=JalrSrcD; funct3E<=funct3D;
     end
   assign ALUSrcE=ALUSrcE_r; assign JalrSrcE=JalrSrcE_r; assign ALUControlE=ALUControlE_r;
+  assign ResultSrcE0 = ResultSrcE[0];
 
   // ---- EX: decision de branch (con funct3E, ZeroE, LTE) ----
   reg BranchTakenE;
