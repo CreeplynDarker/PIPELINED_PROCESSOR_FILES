@@ -14,7 +14,7 @@ module datapath(input         clk, reset,
                 output [31:0] WriteDataM,    // hacia dmem (dato)
                 // hazard unit (2B)
                 input  [1:0]  ForwardAE, ForwardBE,
-                input         StallF, StallD, FlushE,
+                input         StallF, StallD, FlushD, FlushE,
                 output reg [4:0] Rs1E, Rs2E, RdM, RdW, RdE,
                 output [4:0]  Rs1D, Rs2D,
                 // hacia controller
@@ -36,7 +36,7 @@ module datapath(input         clk, reset,
   // ---- IF/ID ----
   reg [31:0] InstrD, PCD, PCPlus4D;
   always @(posedge clk, posedge reset)
-    if (reset) {InstrD,PCD,PCPlus4D} <= 0;
+    if (reset | FlushD) {InstrD,PCD,PCPlus4D} <= 0;
     else if (~StallD) begin InstrD<=InstrF; PCD<=PCF; PCPlus4D<=PCPlus4F; end
 
   assign opD=InstrD[6:0]; assign funct3D=InstrD[14:12]; assign funct7b5D=InstrD[30];
