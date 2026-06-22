@@ -25,19 +25,29 @@ module datapath(input         clk, reset,
 
   // ---- Fetch ----
   reg  [31:0] PCF_r;
-  wire [31:0] PCNextF, PCPlus4F, PCTargetE;
+  wire [31:0] PCNextF, PCPlusLenF, PCTargetE;
+  wire        isCompressedF;
+  wire [31:0] InstrDecompF, InstrExpandedF;
   assign PCF = PCF_r;
-  mux2 #(32) pcmux(.d0(PCPlus4F), .d1(PCTargetE), .s(PCSrcE), .y(PCNextF));
+
+  // FASE 1: descompresion en IF (de ID en adelante todo ve 32 bits)
+  assign isCompressedF = (InstrF[1:0] != 2'b11);
+  decompressor dec(.cinstr(InstrF[15:0]), .instr(InstrDecompF), .illegal());
+  assign InstrExpandedF = isCompressedF ? InstrDecompF : InstrF;
+
+  // FASE 1: PC += 2 si comprimida, += 4 si no (sustituye al adder pcadd4)
+  assign PCPlusLenF = PCF + (isCompressedF ? 32'd2 : 32'd4);
+
+  mux2 #(32) pcmux(.d0(PCPlusLenF), .d1(PCTargetE), .s(PCSrcE), .y(PCNextF));
   always @(posedge clk, posedge reset)
     if (reset) PCF_r <= 32'b0;
     else if (~StallF) PCF_r <= PCNextF;
-  adder pcadd4(.a(PCF), .b(32'd4), .y(PCPlus4F));
 
   // ---- IF/ID ----
   reg [31:0] InstrD, PCD, PCPlus4D;
   always @(posedge clk, posedge reset)
     if (reset | FlushD) {InstrD,PCD,PCPlus4D} <= 0;
-    else if (~StallD) begin InstrD<=InstrF; PCD<=PCF; PCPlus4D<=PCPlus4F; end
+    else if (~StallD) begin InstrD<=InstrExpandedF; PCD<=PCF; PCPlus4D<=PCPlusLenF; end
 
   assign opD=InstrD[6:0]; assign funct3D=InstrD[14:12]; assign funct7b5D=InstrD[30];
   assign Rs1D=InstrD[19:15]; assign Rs2D=InstrD[24:20];

@@ -5,11 +5,15 @@ module imem(input  [31:0] a,
   reg [8*64:1] memfile;          // buffer para el nombre de archivo
 
   initial begin
-    // permite elegir el programa con +mem=...; si no, usa riscvtest.mem
     if (!$value$plusargs("mem=%s", memfile))
       memfile = "riscvtest.mem";
     $readmemh(memfile, RAM);
   end
 
-  assign rd = RAM[a[31:2]];      // direccionamiento por palabra
+  // --- FASE 1: fetch alineado a 2 bytes (modelo de parcels little-endian) ---
+  wire [31:0] lo = RAM[a[31:2]];        // palabra que contiene el parcel bajo
+  wire [31:0] hi = RAM[a[31:2] + 1];    // palabra siguiente (parcel alto si cruza)
+  // a[1]==0 -> instruccion alineada a 4: la palabra completa
+  // a[1]==1 -> empieza en frontera de 2: {parcel bajo de hi, parcel alto de lo}
+  assign rd = a[1] ? {hi[15:0], lo[31:16]} : lo;
 endmodule
