@@ -1,40 +1,46 @@
-// FASE 1: esqueleto del descompresor RVC -> RV32I.
-// Solo implementa c.sub; el resto del batch se agrega en Fases 2..11.
+// FASE 2: descompresor RVC -> RV32I.
+// Soporta c.sub (Fase 1) y c.srli (Fase 2). El resto -> NOP / illegal.
 module decompressor(input  [15:0]     cinstr,
-                    output reg [31:0] instr,    // instruccion de 32 bits expandida
-                    output reg        illegal); // 1 = comprimida no soportada (aun)
+                    output reg [31:0] instr,    // 32 bits expandida
+                    output reg        illegal); // 1 = no soportada (aun)
 
-  // --- helpers reutilizables (los usaran las fases siguientes) ---
   wire [4:0] rdp  = {2'b01, cinstr[9:7]};  // rd'/rs1'  (x8..x15)
   wire [4:0] rs2p = {2'b01, cinstr[4:2]};  // rs2'      (x8..x15)
   wire [1:0] op     = cinstr[1:0];
   wire [2:0] funct3 = cinstr[15:13];
 
-  // sintetizador R-type (reutilizable: sub/xor/or/and/add)
+  // sintetizador R-type (sub/xor/or/and/add)
   function [31:0] rtype(input [6:0] f7, input [4:0] rs2,
                         input [2:0] f3, input [4:0] rs1, input [4:0] rd);
     rtype = {f7, rs2, rs1, f3, rd, 7'b0110011};
   endfunction
 
+  // FASE 2: sintetizador I-ALU (reutilizable: srli/srai/slli/addi/andi)
+  function [31:0] itype(input [11:0] imm, input [4:0] rs1,
+                        input [2:0] f3, input [4:0] rd);
+    itype = {imm, rs1, f3, rd, 7'b0010011};
+  endfunction
+
   always @(*) begin
     illegal = 1'b0;
-    instr   = 32'h00000013;             // NOP (addi x0,x0,0) por defecto
+    instr   = 32'h00000013;              // NOP por defecto
     case (op)
-      2'b01: begin                      // Quadrant 1
-        case (funct3)
-          3'b100: begin                 // MISC-ALU
-            if (cinstr[12]==1'b0 && cinstr[11:10]==2'b11)
-              case (cinstr[6:5])
-                2'b00:   instr = rtype(7'b0100000, rs2p, 3'b000, rdp, rdp); // c.sub
-                default: illegal = 1'b1;                                    // Fases 9-11
-              endcase
-            else
-              illegal = 1'b1;           // c.srli/c.srai/c.andi -> Fases 2,8,4
-          end
-          default: illegal = 1'b1;
+      2'b01: case (funct3)               // Quadrant 1
+        3'b100: case (cinstr[11:10])     // MISC-ALU
+          2'b00: if (cinstr[12]==1'b0)   // c.srli  (RV32: shamt[5] debe ser 0)
+                   instr = itype({7'b0000000, cinstr[6:2]}, rdp, 3'b101, rdp);
+                 else illegal = 1'b1;
+          2'b11: if (cinstr[12]==1'b0)   // grupo CA
+                   case (cinstr[6:5])
+                     2'b00:   instr = rtype(7'b0100000, rs2p, 3'b000, rdp, rdp); // c.sub
+                     default: illegal = 1'b1;                                    // Fases 9-11
+                   endcase
+                 else illegal = 1'b1;
+          default: illegal = 1'b1;       // c.srai(01)/c.andi(10) -> Fases 8,4
         endcase
-      end
-      default: illegal = 1'b1;          // otros cuadrantes -> fases posteriores
+        default: illegal = 1'b1;
+      endcase
+      default: illegal = 1'b1;
     endcase
   end
 endmodule
