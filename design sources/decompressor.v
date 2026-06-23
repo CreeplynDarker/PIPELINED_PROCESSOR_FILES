@@ -1,11 +1,12 @@
-// FASE 2: descompresor RVC -> RV32I.
-// Soporta c.sub (Fase 1) y c.srli (Fase 2). El resto -> NOP / illegal.
+// FASE 3: descompresor RVC -> RV32I.
+// Soporta c.sub (F1), c.srli (F2) y c.lui (F3). El resto -> NOP / illegal.
 module decompressor(input  [15:0]     cinstr,
                     output reg [31:0] instr,    // 32 bits expandida
                     output reg        illegal); // 1 = no soportada (aun)
 
   wire [4:0] rdp  = {2'b01, cinstr[9:7]};  // rd'/rs1'  (x8..x15)
   wire [4:0] rs2p = {2'b01, cinstr[4:2]};  // rs2'      (x8..x15)
+  wire [4:0] rd   = cinstr[11:7];          // rd/rs1 completo (formatos CI/CR)
   wire [1:0] op     = cinstr[1:0];
   wire [2:0] funct3 = cinstr[15:13];
 
@@ -15,10 +16,15 @@ module decompressor(input  [15:0]     cinstr,
     rtype = {f7, rs2, rs1, f3, rd, 7'b0110011};
   endfunction
 
-  // FASE 2: sintetizador I-ALU (reutilizable: srli/srai/slli/addi/andi)
+  // sintetizador I-ALU (srli/srai/slli/addi/andi)
   function [31:0] itype(input [11:0] imm, input [4:0] rs1,
                         input [2:0] f3, input [4:0] rd);
     itype = {imm, rs1, f3, rd, 7'b0010011};
+  endfunction
+
+  // FASE 3: sintetizador U-type (lui)
+  function [31:0] utype(input [19:0] imm, input [4:0] rd);
+    utype = {imm, rd, 7'b0110111};
   endfunction
 
   always @(*) begin
@@ -26,6 +32,11 @@ module decompressor(input  [15:0]     cinstr,
     instr   = 32'h00000013;              // NOP por defecto
     case (op)
       2'b01: case (funct3)               // Quadrant 1
+        3'b011:                          // FASE 3: c.lui (rd != x0,x2; nzimm != 0)
+          if (rd != 5'd0 && rd != 5'd2 && {cinstr[12], cinstr[6:2]} != 6'd0)
+            instr = utype({{15{cinstr[12]}}, cinstr[6:2]}, rd);
+          else
+            illegal = 1'b1;              // rd=x2 -> c.addi16sp (no implementada)
         3'b100: case (cinstr[11:10])     // MISC-ALU
           2'b00: if (cinstr[12]==1'b0)   // c.srli  (RV32: shamt[5] debe ser 0)
                    instr = itype({7'b0000000, cinstr[6:2]}, rdp, 3'b101, rdp);
