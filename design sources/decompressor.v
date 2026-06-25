@@ -1,5 +1,5 @@
 // FASE 3: descompresor RVC -> RV32I.
-// Soporta F1-F9 y c.or (F10). El resto->NOP/illegal.
+// Soporta F1-F10 y c.and (F11). Lote 1 COMPLETO.
 module decompressor(input  [15:0]     cinstr,
                     output reg [31:0] instr,    // 32 bits expandida
                     output reg        illegal); // 1 = no soportada (aun)
@@ -55,7 +55,7 @@ module decompressor(input  [15:0]     cinstr,
                      2'b00:   instr = rtype(7'b0100000, rs2p, 3'b000, rdp, rdp); // c.sub
                      2'b01:   instr = rtype(7'b0000000, rs2p, 3'b100, rdp, rdp); // FASE 9: c.xor
                      2'b10:   instr = rtype(7'b0000000, rs2p, 3'b110, rdp, rdp); // FASE 10: c.or
-                     default: illegal = 1'b1;                                    // Fase 11
+                     2'b11:   instr = rtype(7'b0000000, rs2p, 3'b111, rdp, rdp); // FASE 11: c.and
                    endcase
                  else illegal = 1'b1;
           default: illegal = 1'b1;
