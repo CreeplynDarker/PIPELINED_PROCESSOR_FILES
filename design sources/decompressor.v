@@ -1,5 +1,5 @@
 // FASE 3: descompresor RVC -> RV32I.
-// Soporta c.sub,c.srli,c.lui,c.andi,c.add,c.addi (F1-F6). El resto->NOP/illegal.
+// Soporta c.sub..c.addi y c.slli (F1-F7). El resto->NOP/illegal.
 module decompressor(input  [15:0]     cinstr,
                     output reg [31:0] instr,    // 32 bits expandida
                     output reg        illegal); // 1 = no soportada (aun)
@@ -58,6 +58,11 @@ module decompressor(input  [15:0]     cinstr,
         default: illegal = 1'b1;
       endcase
       2'b10: case (funct3)               // Quadrant 2
+        3'b000:                          // FASE 7: c.slli (rd != x0; RV32: shamt[5]=0)
+          if (rd != 5'd0 && cinstr[12]==1'b0)
+            instr = itype({7'b0000000, cinstr[6:2]}, rd, 3'b001, rd);
+          else
+            illegal = 1'b1;
         3'b100:                          // FASE 5: c.add (cinstr[12]=1, rs2 != 0)
           if (cinstr[12]==1'b1 && cinstr[6:2]!=5'd0)
             instr = rtype(7'b0000000, cinstr[6:2], 3'b000, rd, rd); // add rd,rd,rs2
