@@ -1,7 +1,7 @@
 module imem(input  [31:0] a,
             output [31:0] rd);
 
-  reg [31:0]   RAM[63:0];
+  reg [31:0]   RAM[255:0];   // antes: RAM[63:0]
   reg [8*64:1] memfile;          // buffer para el nombre de archivo
 
   initial begin
