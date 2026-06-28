@@ -10,6 +10,23 @@ module decompressor(input  [15:0]     cinstr,
   wire [1:0] op     = cinstr[1:0];
   wire [2:0] funct3 = cinstr[15:13];
 
+  // FASE 12: inmediato CJ (c.j/c.jal) -> offset con signo, imm[0]=0
+  wire [20:0] cj_imm = {
+    {9{cinstr[12]}}, // [20:12] extension de signo
+    cinstr[12],      // [11]
+    cinstr[8],       // [10]
+    cinstr[10],      // [9]
+    cinstr[9],       // [8]
+    cinstr[6],       // [7]
+    cinstr[7],       // [6]
+    cinstr[2],       // [5]
+    cinstr[11],      // [4]
+    cinstr[5],       // [3]
+    cinstr[4],       // [2]
+    cinstr[3],       // [1]
+    1'b0             // [0]
+  };
+
   // sintetizador R-type (sub/xor/or/and/add)
   function [31:0] rtype(input [6:0] f7, input [4:0] rs2,
                         input [2:0] f3, input [4:0] rs1, input [4:0] rd);
@@ -27,11 +44,18 @@ module decompressor(input  [15:0]     cinstr,
     utype = {imm, rd, 7'b0110111};
   endfunction
 
+  // FASE 12: sintetizador J-type (jal) -- opcode 1101111
+  function [31:0] jtype(input [20:0] imm, input [4:0] rd);
+    jtype = {imm[20], imm[10:1], imm[11], imm[19:12], rd, 7'b1101111};
+  endfunction
+
   always @(*) begin
     illegal = 1'b0;
     instr   = 32'h00000013;              // NOP por defecto
     case (op)
       2'b01: case (funct3)               // Quadrant 1
+        3'b001: instr = jtype(cj_imm, 5'd1); // FASE 12: c.jal -> jal x1, off
+        3'b101: instr = jtype(cj_imm, 5'd0); // FASE 12: c.j   -> jal x0, off
         3'b000:                          // FASE 6: c.addi (rd != x0)
           if (rd != 5'd0)
             instr = itype({{7{cinstr[12]}}, cinstr[6:2]}, rd, 3'b000, rd);
