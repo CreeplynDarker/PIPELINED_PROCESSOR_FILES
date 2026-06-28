@@ -27,6 +27,19 @@ module decompressor(input  [15:0]     cinstr,
     1'b0             // [0]
   };
 
+  // FASE 13: inmediato CB (c.beqz/c.bnez) -> offset con signo, imm[0]=0
+  wire [12:0] cb_imm = {
+    {5{cinstr[12]}}, // [12:8] signo + imm[8]
+    cinstr[6],       // [7]
+    cinstr[5],       // [6]
+    cinstr[2],       // [5]
+    cinstr[11],      // [4]
+    cinstr[10],      // [3]
+    cinstr[4],       // [2]
+    cinstr[3],       // [1]
+    1'b0             // [0]
+  };
+
   // sintetizador R-type (sub/xor/or/and/add)
   function [31:0] rtype(input [6:0] f7, input [4:0] rs2,
                         input [2:0] f3, input [4:0] rs1, input [4:0] rd);
@@ -49,6 +62,12 @@ module decompressor(input  [15:0]     cinstr,
     jtype = {imm[20], imm[10:1], imm[11], imm[19:12], rd, 7'b1101111};
   endfunction
 
+  // FASE 13: sintetizador B-type (beq/bne) -- opcode 1100011
+  function [31:0] btype(input [12:0] imm, input [4:0] rs2,
+                        input [4:0] rs1, input [2:0] f3);
+    btype = {imm[12], imm[10:5], rs2, rs1, f3, imm[4:1], imm[11], 7'b1100011};
+  endfunction
+
   always @(*) begin
     illegal = 1'b0;
     instr   = 32'h00000013;              // NOP por defecto
@@ -56,6 +75,8 @@ module decompressor(input  [15:0]     cinstr,
       2'b01: case (funct3)               // Quadrant 1
         3'b001: instr = jtype(cj_imm, 5'd1); // FASE 12: c.jal -> jal x1, off
         3'b101: instr = jtype(cj_imm, 5'd0); // FASE 12: c.j   -> jal x0, off
+        3'b110: instr = btype(cb_imm, 5'd0, rdp, 3'b000); // FASE 13: c.beqz -> beq rs1',x0,off
+        3'b111: instr = btype(cb_imm, 5'd0, rdp, 3'b001); // FASE 13: c.bnez -> bne rs1',x0,off
         3'b000:                          // FASE 6: c.addi (rd != x0)
           if (rd != 5'd0)
             instr = itype({{7{cinstr[12]}}, cinstr[6:2]}, rd, 3'b000, rd);
