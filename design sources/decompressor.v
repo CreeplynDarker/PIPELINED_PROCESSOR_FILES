@@ -1,5 +1,6 @@
-// FASE 14: descompresor RVC -> RV32I.
-// Soporta Lote 1 completo + F12 c.j/c.jal + F13 c.beqz/c.bnez + F14 c.lw/c.sw.
+// FASE 15: descompresor RVC -> RV32I.
+// Soporta Lote 1 completo + F12 c.j/c.jal + F13 c.beqz/c.bnez +
+// F14 c.lw/c.sw + F15 c.lwsp/c.swsp.
 module decompressor(input  [15:0]     cinstr,
                     output reg [31:0] instr,    // 32 bits expandida
                     output reg        illegal); // 1 = no soportada aun
@@ -43,6 +44,12 @@ module decompressor(input  [15:0]     cinstr,
   // FASE 14: inmediato CL/CS (c.lw/c.sw), offset sin signo escalado por palabra
   wire [11:0] clw_imm = {5'b0, cinstr[5], cinstr[12:10], cinstr[6], 2'b00};
 
+  // FASE 15: inmediato CI para c.lwsp, offset sin signo escalado por palabra
+  wire [11:0] clwsp_imm = {4'b0, cinstr[3:2], cinstr[12], cinstr[6:4], 2'b00};
+
+  // FASE 15: inmediato CSS para c.swsp, offset sin signo escalado por palabra
+  wire [11:0] cswsp_imm = {4'b0, cinstr[8:7], cinstr[12:9], 2'b00};
+
   // sintetizador R-type (sub/xor/or/and/add)
   function [31:0] rtype(input [6:0] f7, input [4:0] rs2,
                         input [2:0] f3, input [4:0] rs1, input [4:0] rd);
@@ -72,12 +79,12 @@ module decompressor(input  [15:0]     cinstr,
     btype = {imm[12], imm[10:5], rs2, rs1, f3, imm[4:1], imm[11], 7'b1100011};
   endfunction
 
-  // FASE 14: sintetizador LOAD (lw) -- opcode 0000011, funct3 010
+  // FASE 14/15: sintetizador LOAD (lw) -- opcode 0000011, funct3 010
   function [31:0] itype_load(input [11:0] imm, input [4:0] rs1, input [4:0] rd);
     itype_load = {imm, rs1, 3'b010, rd, 7'b0000011};
   endfunction
 
-  // FASE 14: sintetizador STORE (sw) -- opcode 0100011, funct3 010
+  // FASE 14/15: sintetizador STORE (sw) -- opcode 0100011, funct3 010
   function [31:0] stype(input [11:0] imm, input [4:0] rs2, input [4:0] rs1);
     stype = {imm[11:5], rs2, rs1, 3'b010, imm[4:0], 7'b0100011};
   endfunction
@@ -85,6 +92,7 @@ module decompressor(input  [15:0]     cinstr,
   always @(*) begin
     illegal = 1'b0;
     instr   = 32'h00000013;              // NOP por defecto
+
     case (op)
       2'b00: case (funct3)               // Quadrant 0
         3'b010: instr = itype_load(clw_imm, rdp, rs2p); // FASE 14: c.lw -> lw rd',off(rs1')
@@ -97,24 +105,30 @@ module decompressor(input  [15:0]     cinstr,
         3'b101: instr = jtype(cj_imm, 5'd0); // FASE 12: c.j   -> jal x0, off
         3'b110: instr = btype(cb_imm, 5'd0, rdp, 3'b000); // FASE 13: c.beqz -> beq rs1',x0,off
         3'b111: instr = btype(cb_imm, 5'd0, rdp, 3'b001); // FASE 13: c.bnez -> bne rs1',x0,off
+
         3'b000:                          // FASE 6: c.addi (rd != x0)
           if (rd != 5'd0)
             instr = itype({{7{cinstr[12]}}, cinstr[6:2]}, rd, 3'b000, rd);
           else
             illegal = 1'b1;              // rd=x0 -> c.nop/HINT (no implementada)
+
         3'b011:                          // FASE 3: c.lui (rd != x0,x2; nzimm != 0)
           if (rd != 5'd0 && rd != 5'd2 && {cinstr[12], cinstr[6:2]} != 6'd0)
             instr = utype({{15{cinstr[12]}}, cinstr[6:2]}, rd);
           else
             illegal = 1'b1;              // rd=x2 -> c.addi16sp (no implementada)
+
         3'b100: case (cinstr[11:10])     // MISC-ALU
           2'b00: if (cinstr[12]==1'b0)   // c.srli  (RV32: shamt[5] debe ser 0)
                    instr = itype({7'b0000000, cinstr[6:2]}, rdp, 3'b101, rdp);
                  else illegal = 1'b1;
+
           2'b01: if (cinstr[12]==1'b0)   // c.srai (RV32: shamt[5]=0); funct7=0100000 -> SRA
                    instr = itype({7'b0100000, cinstr[6:2]}, rdp, 3'b101, rdp);
                  else illegal = 1'b1;
+
           2'b10: instr = itype({{7{cinstr[12]}}, cinstr[6:2]}, rdp, 3'b111, rdp); // c.andi
+
           2'b11: if (cinstr[12]==1'b0)   // grupo CA
                    case (cinstr[6:5])
                      2'b00: instr = rtype(7'b0100000, rs2p, 3'b000, rdp, rdp); // c.sub
@@ -123,8 +137,10 @@ module decompressor(input  [15:0]     cinstr,
                      2'b11: instr = rtype(7'b0000000, rs2p, 3'b111, rdp, rdp); // c.and
                    endcase
                  else illegal = 1'b1;
+
           default: illegal = 1'b1;
         endcase
+
         default: illegal = 1'b1;
       endcase
 
@@ -134,11 +150,21 @@ module decompressor(input  [15:0]     cinstr,
             instr = itype({7'b0000000, cinstr[6:2]}, rd, 3'b001, rd);
           else
             illegal = 1'b1;
+
+        3'b010:                          // FASE 15: c.lwsp -> lw rd,off(x2)
+          if (rd != 5'd0)
+            instr = itype_load(clwsp_imm, 5'd2, rd);
+          else
+            illegal = 1'b1;              // rd=x0 reservado
+
         3'b100:                          // FASE 5: c.add (cinstr[12]=1, rs2 != 0)
           if (cinstr[12]==1'b1 && cinstr[6:2]!=5'd0)
             instr = rtype(7'b0000000, cinstr[6:2], 3'b000, rd, rd); // add rd,rd,rs2
           else
             illegal = 1'b1;              // c.jr/c.mv/c.jalr/c.ebreak -> lote 2
+
+        3'b110: instr = stype(cswsp_imm, cinstr[6:2], 5'd2); // FASE 15: c.swsp -> sw rs2,off(x2)
+
         default: illegal = 1'b1;
       endcase
 
