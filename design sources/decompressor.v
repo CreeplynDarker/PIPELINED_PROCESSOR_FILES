@@ -1,6 +1,6 @@
-// FASE 15: descompresor RVC -> RV32I.
+// FASE 16: descompresor RVC -> RV32I.
 // Soporta Lote 1 completo + F12 c.j/c.jal + F13 c.beqz/c.bnez +
-// F14 c.lw/c.sw + F15 c.lwsp/c.swsp.
+// F14 c.lw/c.sw + F15 c.lwsp/c.swsp + F16 c.jr.
 module decompressor(input  [15:0]     cinstr,
                     output reg [31:0] instr,    // 32 bits expandida
                     output reg        illegal); // 1 = no soportada aun
@@ -89,6 +89,11 @@ module decompressor(input  [15:0]     cinstr,
     stype = {imm[11:5], rs2, rs1, 3'b010, imm[4:0], 7'b0100011};
   endfunction
 
+  // FASE 16: sintetizador JALR -- opcode 1100111, funct3 000
+  function [31:0] itype_jalr(input [11:0] imm, input [4:0] rs1, input [4:0] rd);
+    itype_jalr = {imm, rs1, 3'b000, rd, 7'b1100111};
+  endfunction
+
   always @(*) begin
     illegal = 1'b0;
     instr   = 32'h00000013;              // NOP por defecto
@@ -157,11 +162,19 @@ module decompressor(input  [15:0]     cinstr,
           else
             illegal = 1'b1;              // rd=x0 reservado
 
-        3'b100:                          // FASE 5: c.add (cinstr[12]=1, rs2 != 0)
-          if (cinstr[12]==1'b1 && cinstr[6:2]!=5'd0)
-            instr = rtype(7'b0000000, cinstr[6:2], 3'b000, rd, rd); // add rd,rd,rs2
-          else
-            illegal = 1'b1;              // c.jr/c.mv/c.jalr/c.ebreak -> lote 2
+        3'b100: begin                    // CR: c.jr / c.add / otros
+          if (cinstr[12] == 1'b0) begin
+            if (cinstr[6:2] == 5'd0 && rd != 5'd0)
+              instr = itype_jalr(12'd0, rd, 5'd0); // FASE 16: c.jr -> jalr x0,0(rs1)
+            else
+              illegal = 1'b1;            // c.mv no implementada / rs1=x0 reservado
+          end else begin
+            if (cinstr[6:2] != 5'd0)
+              instr = rtype(7'b0000000, cinstr[6:2], 3'b000, rd, rd); // c.add ya implementada
+            else
+              illegal = 1'b1;            // c.jalr/c.ebreak -> Fase 17
+          end
+        end
 
         3'b110: instr = stype(cswsp_imm, cinstr[6:2], 5'd2); // FASE 15: c.swsp -> sw rs2,off(x2)
 
