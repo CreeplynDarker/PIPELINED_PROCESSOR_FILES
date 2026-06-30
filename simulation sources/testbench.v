@@ -1,15 +1,22 @@
 // =====================================================================
-//  testbench_final.v -- Testbench para el "Programa de prueba final"
-//  (multiplicacion de matrices 2x2 + checksum).
+//  testbench_universal.v -- Testbench unico para TODOS los programas:
+//    * Programas de fase (autocontenidos): centinela mem[100] = 25.
+//    * Programa de prueba final (suma de arreglo): lee A de memoria.
 //
-//  Diferencias respecto al testbench de fases:
-//   1) Precarga A y B en la memoria de datos antes del reset.
-//   2) No usa el sentinel mem[100]=25; comprueba C y h AL FINAL.
-//   3) Timeout mas largo (el programa son 272 ciclos ~ 2720 ns).
+//  La memoria de INSTRUCCIONES se elige con el plusarg propio del imem:
+//      +mem=<programa.mem>
 //
-//  Compilar (con la imem ampliada a >=66 palabras para la version RV32I):
-//    iverilog -g2012 -o sim <design>/*.v testbench_final.v
-//    vvp sim +mem=matmul_rv32i.mem      (o matmul_hybrid.mem)
+//  Plusargs OPCIONALES del testbench (todos con valor por defecto):
+//      +data=<archivo.mem>  precarga de la dmem ($readmemh, palabra N -> RAM[N]).
+//                           Si se omite, la dmem queda en 0 (fases).
+//      +addr=N              direccion de byte del centinela   (def. 100).
+//      +expect=N            valor esperado en el centinela     (def. 25).
+//      +maxtime=N           ventana de simulacion en ns        (def. 2000).
+//
+//  Ejemplos:
+//      vvp sim +mem=test_cj_cjal.mem
+//      vvp sim +mem=programa_final_32bits.mem     +data=datos_suma.mem
+//      vvp sim +mem=programa_final_comprimido.mem +data=datos_suma.mem
 // =====================================================================
 module testbench;
   reg          clk;
@@ -17,60 +24,59 @@ module testbench;
   wire [31:0]  WriteData;
   wire [31:0]  DataAdr;
   wire         MemWrite;
-  integer      errores;
 
-  // instancia del dispositivo bajo prueba
+  reg [8*64:1] datafile;
+  integer      addr_byte;   // direccion de byte del centinela
+  integer      expected;    // valor esperado
+  integer      maxtime;     // ventana de simulacion (ns)
+  integer      widx;        // indice de palabra = addr_byte/4
+  integer      i;
+
+  // dispositivo bajo prueba
   top dut(.clk(clk), .reset(reset), .WriteData(WriteData),
           .DataAdr(DataAdr), .MemWrite(MemWrite));
 
-  // volcado de waveform para el informe (abrir con GTKWave)
+  // volcado de waveform (abrir con GTKWave; mismo grupo de senales para
+  // RV32I y RVC: PCF, InstrF, isCompressedF, InstrD, rf[*], MemWrite,
+  // DataAdr, WriteData, PCSrcE, ...)
   initial begin
     $dumpfile("wave.vcd");
     $dumpvars(0, testbench);
   end
 
-  // --- PRECARGA de datos + reset ---
-  // A y B se colocan a mano en la memoria de datos (la dmem no se carga
-  // desde archivo). Palabra N de la dmem = direccion de byte 4*N.
-  //   A en palabras 0..3 (dir 0..12):  [[2,3],[4,1]]
-  //   B en palabras 4..7 (dir 16..28): [[1,5],[2,3]]
+  // --- precarga opcional de datos + reset ---
   initial begin
-    dut.dmem.RAM[0] = 32'd2;  dut.dmem.RAM[1] = 32'd3;   // A[0][0], A[0][1]
-    dut.dmem.RAM[2] = 32'd4;  dut.dmem.RAM[3] = 32'd1;   // A[1][0], A[1][1]
-    dut.dmem.RAM[4] = 32'd1;  dut.dmem.RAM[5] = 32'd5;   // B[0][0], B[0][1]
-    dut.dmem.RAM[6] = 32'd2;  dut.dmem.RAM[7] = 32'd3;   // B[1][0], B[1][1]
+    for (i = 0; i < 64; i = i + 1) dut.dmem.RAM[i] = 32'd0;  // limpia dmem (evita X)
+    if (!$value$plusargs("data=%s", datafile))
+      datafile = "data.mem";
+    $readmemh(datafile, dut.dmem.RAM);
     reset = 1; # 22; reset = 0;
   end
 
   // reloj
-  always begin
-    clk = 1; # 5; clk = 0; # 5;
-  end
+  always begin clk = 1; # 5; clk = 0; # 5; end
 
   // log de cada escritura (util para seguir los stores en el waveform)
   always @(negedge clk)
     if (MemWrite)
-      $display("[%0t] STORE  mem[%0d] <= %0d", $time, DataAdr, WriteData);
+      $display("[%0t] STORE  mem[%0d] <= %0d (0x%h)", $time, DataAdr, WriteData, WriteData);
 
-  // --- COMPROBACION FINAL ---
-  // Se espera a que el programa termine y se revisa la memoria de datos:
-  //   C en palabras 8..11 (dir 32..44) debe ser [8, 19, 6, 23]
-  //   h en palabra 12 (dir 48) debe ser 15
+  // --- veredicto unificado ---
   initial begin
-    # 4000;                      // holgura suficiente (272 ciclos ~ 2720 ns)
-    errores = 0;
-    if (dut.dmem.RAM[8]  !== 32'd8)  errores = errores + 1;
-    if (dut.dmem.RAM[9]  !== 32'd19) errores = errores + 1;
-    if (dut.dmem.RAM[10] !== 32'd6)  errores = errores + 1;
-    if (dut.dmem.RAM[11] !== 32'd23) errores = errores + 1;
-    if (dut.dmem.RAM[12] !== 32'd15) errores = errores + 1;
+    if (!$value$plusargs("addr=%d",    addr_byte)) addr_byte = 100;
+    if (!$value$plusargs("expect=%d",  expected))  expected  = 25;
+    if (!$value$plusargs("maxtime=%d", maxtime))   maxtime   = 2000;
 
+    #(maxtime);
+    widx = addr_byte / 4;
     $display("---------------------------------------------");
-    $display("C = [%0d %0d ; %0d %0d]   checksum h = %0d",
-             dut.dmem.RAM[8],  dut.dmem.RAM[9],
-             dut.dmem.RAM[10], dut.dmem.RAM[11], dut.dmem.RAM[12]);
-    if (errores === 0) $display("Simulation succeeded");
-    else               $display("Simulation failed (%0d valores incorrectos)", errores);
+    $display("mem[%0d] = RAM[%0d] = %0d   (esperado %0d)",
+             addr_byte, widx, dut.dmem.RAM[widx], expected);
+    if (dut.dmem.RAM[widx] === expected)
+      $display("Simulation succeeded");
+    else
+      $display("Simulation failed (mem[%0d] = %0d, esperado %0d)",
+               addr_byte, dut.dmem.RAM[widx], expected);
     $finish;
   end
 endmodule
